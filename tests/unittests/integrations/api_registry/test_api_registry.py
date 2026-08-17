@@ -44,6 +44,14 @@ MOCK_MCP_SERVERS_LIST = {
             "name": "test-mcp-server-https",
             "urls": ["https://mcp.server_https.com"],
         },
+        {
+            "name": "test-mcp-server-google",
+            "urls": ["mcp.us-central1.googleapis.com"],
+        },
+        {
+            "name": "test-mcp-server-google-http",
+            "urls": ["http://mcp.us-central1.googleapis.com"],
+        },
     ]
 }
 
@@ -79,7 +87,7 @@ class TestApiRegistry(unittest.IsolatedAsyncioTestCase):
         api_registry_project_id=self.project_id, location=self.location
     )
 
-    self.assertEqual(len(api_registry._mcp_servers), 5)
+    self.assertEqual(len(api_registry._mcp_servers), 7)
     self.assertIn("test-mcp-server-1", api_registry._mcp_servers)
     self.assertIn("test-mcp-server-2", api_registry._mcp_servers)
     self.assertIn("test-mcp-server-no-url", api_registry._mcp_servers)
@@ -107,7 +115,7 @@ class TestApiRegistry(unittest.IsolatedAsyncioTestCase):
         api_registry_project_id=self.project_id, location=self.location
     )
 
-    self.assertEqual(len(api_registry._mcp_servers), 5)
+    self.assertEqual(len(api_registry._mcp_servers), 7)
     self.assertIn("test-mcp-server-1", api_registry._mcp_servers)
     self.assertIn("test-mcp-server-2", api_registry._mcp_servers)
     self.assertIn("test-mcp-server-no-url", api_registry._mcp_servers)
@@ -240,7 +248,7 @@ class TestApiRegistry(unittest.IsolatedAsyncioTestCase):
     MockMcpToolset.assert_called_once_with(
         connection_params=StreamableHTTPConnectionParams(
             url="https://mcp.server1.com",
-            headers={"Authorization": "Bearer mock_token"},
+            headers=None,
         ),
         tool_filter=None,
         tool_name_prefix=None,
@@ -267,11 +275,11 @@ class TestApiRegistry(unittest.IsolatedAsyncioTestCase):
         api_registry_project_id=self.project_id, location=self.location
     )
 
-    toolset = api_registry.get_toolset("test-mcp-server-1")
+    toolset = api_registry.get_toolset("test-mcp-server-google")
 
     MockMcpToolset.assert_called_once_with(
         connection_params=StreamableHTTPConnectionParams(
-            url="https://mcp.server1.com",
+            url="https://mcp.us-central1.googleapis.com",
             headers={
                 "Authorization": "Bearer mock_token",
                 "x-goog-user-project": "quota-project",
@@ -312,7 +320,7 @@ class TestApiRegistry(unittest.IsolatedAsyncioTestCase):
     MockMcpToolset.assert_called_once_with(
         connection_params=StreamableHTTPConnectionParams(
             url="https://mcp.server1.com",
-            headers={"Authorization": "Bearer mock_token"},
+            headers=None,
         ),
         tool_filter=tool_filter,
         tool_name_prefix=tool_name_prefix,
@@ -348,12 +356,45 @@ class TestApiRegistry(unittest.IsolatedAsyncioTestCase):
           MockMcpToolset.assert_called_once_with(
               connection_params=StreamableHTTPConnectionParams(
                   url=mock_url,
-                  headers={"Authorization": "Bearer mock_token"},
+                  headers=None,
               ),
               tool_filter=None,
               tool_name_prefix=None,
               header_provider=None,
           )
+
+  def test_get_toolset_credentials_only_for_google_api_url(self):
+    params = [
+        ("test-mcp-server-1", None),
+        ("test-mcp-server-http", None),
+        ("test-mcp-server-https", None),
+        ("test-mcp-server-google-http", None),
+        ("test-mcp-server-google", {"Authorization": "Bearer mock_token"}),
+    ]
+    for mock_server_name, expected_headers in params:
+      with self.subTest(server_name=mock_server_name):
+        with (
+            patch.object(httpx, "Client", autospec=True) as MockHttpClient,
+            patch.object(
+                api_registry.api_registry, "McpToolset", autospec=True
+            ) as MockMcpToolset,
+        ):
+          mock_response = create_autospec(httpx.Response, instance=True)
+          mock_response.json.return_value = MOCK_MCP_SERVERS_LIST
+          mock_client_instance = MockHttpClient.return_value
+          mock_client_instance.__enter__.return_value = mock_client_instance
+          mock_client_instance.get.return_value = mock_response
+
+          api_registry_instance = ApiRegistry(
+              api_registry_project_id=self.project_id, location=self.location
+          )
+
+          api_registry_instance.get_toolset(mock_server_name)
+
+          connection_params = MockMcpToolset.call_args.kwargs[
+              "connection_params"
+          ]
+          self.assertEqual(connection_params.headers, expected_headers)
 
   @patch("httpx.Client", autospec=True)
   async def test_get_toolset_server_not_found(self, MockHttpClient):

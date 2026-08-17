@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 from typing import Callable
+from urllib.parse import urlparse
 
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.tools.base_toolset import ToolPredicate
@@ -26,6 +27,17 @@ import google.auth.transport.requests
 import httpx
 
 API_REGISTRY_URL = "https://cloudapiregistry.googleapis.com"
+
+
+def _is_google_api(url: str) -> bool:
+  """Checks if the given URL points to a Google API endpoint over https."""
+  parsed_url = urlparse(url)
+  if parsed_url.scheme != "https" or not parsed_url.hostname:
+    return False
+  return (
+      parsed_url.hostname == "googleapis.com"
+      or parsed_url.hostname.endswith(".googleapis.com")
+  )
 
 
 class ApiRegistry:
@@ -110,11 +122,17 @@ class ApiRegistry:
       raise ValueError(f"MCP server {mcp_server_name} has no URLs.")
 
     mcp_server_url = server["urls"][0]
-    headers = self._get_auth_headers()
 
     # Only prepend "https://" if the URL doesn't already have a scheme
     if not mcp_server_url.startswith(("http://", "https://")):
       mcp_server_url = "https://" + mcp_server_url
+
+    # A registry entry can name any host, so the caller's own credentials are
+    # only attached to Google API endpoints. Other servers get their headers
+    # from the header_provider.
+    headers = (
+        self._get_auth_headers() if _is_google_api(mcp_server_url) else None
+    )
 
     return McpToolset(
         connection_params=StreamableHTTPConnectionParams(
